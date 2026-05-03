@@ -1,6 +1,8 @@
 const STORAGE_KEY = "splitbill.pwa.state.v1";
 const FRANKFURTER_BASE_URL = "https://api.frankfurter.dev/v2";
 const EPSILON = 0.005;
+const HISTORY_RETENTION_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const CURRENCIES = [
   "CNY",
@@ -28,7 +30,8 @@ const DEFAULT_STATE = {
   people: [],
   expenses: [],
   rateCache: {},
-  manualRates: {}
+  manualRates: {},
+  history: []
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -67,6 +70,7 @@ function normalizeState(input) {
     settings: { ...next.settings, ...(input?.settings || {}) },
     people: Array.isArray(input?.people) ? input.people : next.people,
     expenses: Array.isArray(input?.expenses) ? input.expenses : [],
+    history: Array.isArray(input?.history) ? input.history : [],
     rateCache: input?.rateCache && typeof input.rateCache === "object" ? input.rateCache : {},
     manualRates: input?.manualRates && typeof input.manualRates === "object" ? input.manualRates : {}
   };
@@ -85,7 +89,29 @@ function normalizeState(input) {
     rateOverride: expense.rateOverride || null,
     rateDate: expense.rateDate || expense.date
   }));
+  merged.history = pruneHistory(merged.history.map(normalizeHistoryEntry));
   return merged;
+}
+
+function normalizeHistoryEntry(entry) {
+  return {
+    id: entry.id || makeId("history"),
+    bookName: entry.bookName || "历史账单",
+    archivedAt: entry.archivedAt || new Date().toISOString(),
+    expiresAt: entry.expiresAt || new Date(Date.now() + HISTORY_RETENTION_DAYS * DAY_MS).toISOString(),
+    baseCurrency: CURRENCIES.includes(entry.baseCurrency) ? entry.baseCurrency : "CNY",
+    total: Number(entry.total || 0),
+    people: Array.isArray(entry.people) ? entry.people : [],
+    expenses: Array.isArray(entry.expenses) ? entry.expenses : [],
+    balances: entry.balances && typeof entry.balances === "object" ? entry.balances : {},
+    transfers: Array.isArray(entry.transfers) ? entry.transfers : [],
+    missingRates: Array.isArray(entry.missingRates) ? entry.missingRates : []
+  };
+}
+
+function pruneHistory(history) {
+  const now = Date.now();
+  return history.filter((entry) => new Date(entry.expiresAt).getTime() > now);
 }
 
 function isLegacyDefaultPeopleOnly(currentState) {
@@ -638,6 +664,35 @@ function settlementCurrencyForPerson(personId) {
   return state.settings.settlementCurrencies?.[personId] || state.settings.settlementCurrency || state.settings.baseCurrency;
 }
 
+function buildHistoryEntry(currentState = state, archivedAt = new Date()) {
+  const result = calculateBalances(currentState);
+  const transfers = result.missingRates.length ? [] : buildTransfers(result.balances);
+  return {
+    id: makeId("history"),
+    bookName: currentState.settings.bookName || "历史账单",
+    archivedAt: archivedAt.toISOString(),
+    expiresAt: new Date(archivedAt.getTime() + HISTORY_RETENTION_DAYS * DAY_MS).toISOString(),
+    baseCurrency: currentState.settings.baseCurrency,
+    total: result.total,
+    people: clone(currentState.people),
+    expenses: clone(currentState.expenses),
+    balances: clone(result.balances),
+    transfers: clone(transfers),
+    missingRates: clone(result.missingRates)
+  };
+}
+
+function shouldArchiveCurrentBook() {
+  return state.people.length > 0 || state.expenses.length > 0;
+}
+
+function archiveCurrentBook() {
+  if (!shouldArchiveCurrentBook()) return null;
+  const entry = buildHistoryEntry(state);
+  state.history = pruneHistory([entry, ...(state.history || [])]);
+  return entry;
+}
+
 function renderSummary() {
   const result = calculateBalances();
   $("#bookName").textContent = state.settings.bookName;
@@ -656,9 +711,141 @@ function renderAll() {
   renderMembers();
   renderExpenseList();
   renderSettlement();
+  renderHistoryList();
   renderSummary();
   $("#expenseForm .primary-button").disabled = state.people.length === 0;
   renderExpenseRatePanel(editingExpenseId ? state.expenses.find((expense) => expense.id === editingExpenseId) : null);
+}
+
+function renderHistoryList() {
+  const list = $("#historyList");
+  if (!list) return;
+  state.history = pruneHistory(state.history || []);
+  list.innerHTML = "";
+
+  if (state.history.length === 0) {
+    const empty = emptyNode();
+    empty.querySelector("strong").textContent = "暂无历史账单";
+    empty.querySelector("span").textContent = "点击“账已平，初始化账本”后会自动归档。";
+    list.appendChild(empty);
+    return;
+  }
+
+  state.history.forEach((entry) => {
+    const item = document.createElement("div");
+    item.className = "history-item";
+    item.innerHTML = `
+      <div class="item-title">
+        <strong>${escapeHtml(entry.bookName)}</strong>
+        <span>${formatDateTime(entry.archivedAt)} · ${entry.people.length} 人 · ${entry.expenses.length} 笔消费</span>
+        <span>总额 ${formatMoney(entry.total, entry.baseCurrency)} · ${daysUntil(entry.expiresAt)} 天后自动删除</span>
+      </div>
+      <div class="item-actions">
+        <button class="secondary-button small-button" type="button" data-open-history="${entry.id}">查看</button>
+        <button class="text-button" type="button" data-delete-history="${entry.id}">删除</button>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+}
+
+function renderHistoryDetail(entryId) {
+  const entry = state.history.find((item) => item.id === entryId);
+  const panel = $("#historyDetailPanel");
+  const detail = $("#historyDetail");
+  if (!entry || !panel || !detail) return;
+
+  $("#historyDetailTitle").textContent = entry.bookName;
+  detail.innerHTML = "";
+  panel.hidden = false;
+
+  const summary = document.createElement("div");
+  summary.className = "history-summary";
+  summary.innerHTML = `
+    <div><span>归档时间</span><strong>${formatDateTime(entry.archivedAt)}</strong></div>
+    <div><span>参与人</span><strong>${entry.people.length}</strong></div>
+    <div><span>消费笔数</span><strong>${entry.expenses.length}</strong></div>
+    <div><span>总额</span><strong>${formatMoney(entry.total, entry.baseCurrency)}</strong></div>
+  `;
+  detail.appendChild(summary);
+
+  const expenses = document.createElement("div");
+  expenses.className = "history-section";
+  expenses.innerHTML = `<h4>消费摘要</h4>`;
+  if (entry.expenses.length === 0) {
+    expenses.appendChild(historyMutedLine("无消费明细"));
+  } else {
+    entry.expenses.slice(0, 8).forEach((expense) => {
+      expenses.appendChild(historyLine(
+        expense.title,
+        `${expense.date} · ${historyPersonName(entry, expense.payerId)} 付款 · ${formatMoney(expense.amount, expense.currency)}`
+      ));
+    });
+    if (entry.expenses.length > 8) {
+      expenses.appendChild(historyMutedLine(`还有 ${entry.expenses.length - 8} 笔未展开显示`));
+    }
+  }
+  detail.appendChild(expenses);
+
+  const balances = document.createElement("div");
+  balances.className = "history-section";
+  balances.innerHTML = `<h4>净额摘要</h4>`;
+  entry.people.forEach((person) => {
+    const amount = Number(entry.balances[person.id] || 0);
+    balances.appendChild(historyLine(person.name, `${amount >= 0 ? "应收" : "应付"} ${formatMoney(Math.abs(amount), entry.baseCurrency)}`));
+  });
+  detail.appendChild(balances);
+
+  const transfers = document.createElement("div");
+  transfers.className = "history-section";
+  transfers.innerHTML = `<h4>平账方式</h4>`;
+  if (entry.missingRates.length > 0) {
+    transfers.appendChild(historyMutedLine("归档时仍有缺少汇率的消费，未生成完整平账方案。"));
+  } else if (entry.transfers.length === 0) {
+    transfers.appendChild(historyMutedLine("归档时已经平账，无需转账。"));
+  } else {
+    entry.transfers.forEach((transfer) => {
+      transfers.appendChild(historyLine(
+        `${historyPersonName(entry, transfer.from)} → ${historyPersonName(entry, transfer.to)}`,
+        formatMoney(transfer.amount, entry.baseCurrency)
+      ));
+    });
+  }
+  detail.appendChild(transfers);
+}
+
+function historyLine(title, body) {
+  const row = document.createElement("div");
+  row.className = "history-line";
+  row.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span>`;
+  return row;
+}
+
+function historyMutedLine(body) {
+  const row = document.createElement("p");
+  row.className = "muted-line";
+  row.textContent = body;
+  return row;
+}
+
+function historyPersonName(entry, id) {
+  return entry.people.find((person) => person.id === id)?.name || "未知成员";
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未知时间";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function daysUntil(value) {
+  const diff = new Date(value).getTime() - Date.now();
+  return Math.max(0, Math.ceil(diff / DAY_MS));
 }
 
 function emptyNode() {
@@ -739,12 +926,18 @@ async function fetchExpenseRateForForm() {
   }
 }
 
-function resetWholeBook() {
+function resetWholeBook(options = {}) {
+  const { archive = false } = options;
+  const history = pruneHistory(state.history || []);
+  const archived = archive ? archiveCurrentBook() : null;
+  const nextHistory = archived ? state.history : history;
   state = clone(DEFAULT_STATE);
+  state.history = nextHistory;
   saveState();
   resetExpenseForm();
   $("#settleDate").value = todayISO();
   renderAll();
+  return archived;
 }
 
 function bindEvents() {
@@ -752,6 +945,11 @@ function bindEvents() {
     button.addEventListener("click", () => {
       activateView(button.dataset.view);
     });
+  });
+
+  $("#historyButton").addEventListener("click", () => {
+    activateView("historyView");
+    renderHistoryList();
   });
 
   $("#fillTodayButton").addEventListener("click", () => {
@@ -901,9 +1099,34 @@ function bindEvents() {
   });
 
   $("#closeBookButton").addEventListener("click", () => {
-    const ok = window.confirm("确认所有转账都完成，并初始化整个账本吗？这会删除本机现有账本数据。");
+    const ok = window.confirm("确认所有转账都完成，并把当前账本归档为历史后初始化吗？历史账单会保留 30 天。");
     if (!ok) return;
-    resetWholeBook();
+    const archived = resetWholeBook({ archive: true });
+    if (archived) {
+      activateView("historyView");
+      renderHistoryDetail(archived.id);
+    }
+  });
+
+  $("#historyList").addEventListener("click", (event) => {
+    const openButton = event.target.closest("[data-open-history]");
+    if (openButton) {
+      renderHistoryDetail(openButton.dataset.openHistory);
+      return;
+    }
+
+    const deleteButton = event.target.closest("[data-delete-history]");
+    if (!deleteButton) return;
+    const ok = window.confirm("确定删除这条历史账单吗？");
+    if (!ok) return;
+    state.history = state.history.filter((entry) => entry.id !== deleteButton.dataset.deleteHistory);
+    saveState();
+    $("#historyDetailPanel").hidden = true;
+    renderHistoryList();
+  });
+
+  $("#closeHistoryDetailButton").addEventListener("click", () => {
+    $("#historyDetailPanel").hidden = true;
   });
 
   window.addEventListener("beforeinstallprompt", (event) => {
@@ -944,8 +1167,10 @@ if (typeof window !== "undefined") {
   window.SplitBillCore = {
     calculateBalances,
     buildTransfers,
+    buildHistoryEntry,
     convertWithCache,
     convertWithCacheFromState,
+    pruneHistory,
     rateKey
   };
 
@@ -956,7 +1181,9 @@ if (typeof module !== "undefined") {
   module.exports = {
     calculateBalances,
     buildTransfers,
+    buildHistoryEntry,
     convertWithCacheFromState,
+    pruneHistory,
     rateKey,
     normalizeState
   };

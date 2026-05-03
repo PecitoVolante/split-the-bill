@@ -2,7 +2,9 @@ const assert = require("node:assert/strict");
 const {
   calculateBalances,
   buildTransfers,
+  buildHistoryEntry,
   normalizeState,
+  pruneHistory,
   rateKey
 } = require("../app.js");
 
@@ -142,6 +144,50 @@ const people = [
     { from: "b", to: "c", amount: 25 }
   ]);
   assert.ok(transfers.length <= 2, "three-person settlement should use at most people minus one transfers");
+}
+
+{
+  const archivedAt = new Date("2026-05-03T10:00:00Z");
+  const state = normalizeState({
+    settings: { bookName: "Archive Test", baseCurrency: "CNY", settlementCurrency: "CNY" },
+    people: people.slice(0, 2),
+    expenses: [
+      {
+        id: "e1",
+        date: "2026-05-03",
+        title: "Dinner",
+        amount: 100,
+        currency: "CNY",
+        payerId: "a",
+        splits: [
+          { personId: "a", included: true, weight: 1 },
+          { personId: "b", included: true, weight: 1 }
+        ]
+      }
+    ],
+    rateCache: {},
+    manualRates: {},
+    history: []
+  });
+
+  const entry = buildHistoryEntry(state, archivedAt);
+  assert.equal(entry.bookName, "Archive Test");
+  assert.equal(entry.expenses.length, 1);
+  assert.equal(entry.people.length, 2);
+  closeTo(entry.total, 100, "history should capture total");
+  closeTo(entry.balances.a, 50, "history should capture payer balance");
+  closeTo(entry.balances.b, -50, "history should capture debtor balance");
+  assert.deepEqual(entry.transfers, [{ from: "b", to: "a", amount: 50 }]);
+  assert.equal(entry.expiresAt, "2026-06-02T10:00:00.000Z");
+}
+
+{
+  const history = [
+    { id: "old", expiresAt: "2026-05-02T00:00:00.000Z" },
+    { id: "fresh", expiresAt: "2099-05-02T00:00:00.000Z" }
+  ].map((entry) => ({ ...entry, archivedAt: "2026-05-01T00:00:00.000Z" }));
+  const pruned = pruneHistory(history);
+  assert.deepEqual(pruned.map((entry) => entry.id), ["fresh"]);
 }
 
 console.log("core tests passed");

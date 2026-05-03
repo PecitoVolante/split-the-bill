@@ -63,6 +63,12 @@ button:disabled {
   min-height: 56px;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .topbar h1,
 .hero-panel h2,
 .panel h3 {
@@ -308,6 +314,7 @@ select:focus {
 .balance-list,
 .transfer-list,
 .settlement-rate-list,
+.history-list,
 .split-list {
   display: grid;
   gap: 10px;
@@ -318,6 +325,7 @@ select:focus {
 .balance-item,
 .transfer-item,
 .settlement-rate-item,
+.history-item,
 .split-item {
   display: grid;
   gap: 8px;
@@ -331,7 +339,8 @@ select:focus {
 .member-item,
 .balance-item,
 .transfer-item,
-.settlement-rate-item {
+.settlement-rate-item,
+.history-item {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
@@ -396,6 +405,70 @@ select:focus {
 
 .settlement-rate-item select {
   width: 112px;
+}
+
+.history-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.history-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.history-summary div {
+  min-width: 0;
+  padding: 10px;
+  background: var(--surface-soft);
+  border: 1px solid #c7e5df;
+  border-radius: var(--radius);
+}
+
+.history-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.history-summary strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.history-section {
+  display: grid;
+  gap: 8px;
+}
+
+.history-section h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.history-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  background: #fbfdfc;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.history-line strong,
+.history-line span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-line span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 .negative {
@@ -479,7 +552,13 @@ select:focus {
   .expense-item,
   .balance-item,
   .transfer-item,
+  .history-item,
+  .history-line,
   .settlement-rate-item {
+    grid-template-columns: 1fr;
+  }
+
+  .history-summary {
     grid-template-columns: 1fr;
   }
 
