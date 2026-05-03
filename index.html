@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f766e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="SplitBill">
+    <title>SplitBill 多人记账</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon.svg">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">本机账本</p>
+          <h1>SplitBill</h1>
+        </div>
+        <button class="icon-button" type="button" id="installButton" title="添加到主屏幕" aria-label="添加到主屏幕" hidden>
+          <span aria-hidden="true">＋</span>
+        </button>
+      </header>
+
+      <main class="app-main">
+        <section class="hero-panel">
+          <div>
+            <p class="eyebrow">当前账本</p>
+            <h2 id="bookName">旅行账本</h2>
+          </div>
+          <div class="summary-grid" aria-live="polite">
+            <div>
+              <span>参与人</span>
+              <strong id="peopleCount">0</strong>
+            </div>
+            <div>
+              <span>消费</span>
+              <strong id="expenseCount">0</strong>
+            </div>
+            <div>
+              <span>总额</span>
+              <strong id="totalAmount">CNY 0.00</strong>
+            </div>
+          </div>
+        </section>
+
+        <nav class="tabbar" aria-label="主要功能">
+          <button class="tab-button active" type="button" data-view="expenseView">记一笔</button>
+          <button class="tab-button" type="button" data-view="peopleView">成员</button>
+          <button class="tab-button" type="button" data-view="listView">明细</button>
+          <button class="tab-button" type="button" data-view="settleView">平账</button>
+        </nav>
+
+        <section class="view active" id="expenseView">
+          <form class="panel form-grid" id="expenseForm">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow" id="expenseFormEyebrow">新增消费</p>
+                <h3 id="expenseFormTitle">记一笔</h3>
+              </div>
+              <button class="secondary-button" type="button" id="fillTodayButton">今天</button>
+            </div>
+
+            <label>
+              <span>日期</span>
+              <input type="date" id="expenseDate" required>
+            </label>
+            <label>
+              <span>说明</span>
+              <input type="text" id="expenseTitle" placeholder="晚餐、酒店、门票" maxlength="32" required>
+            </label>
+            <div class="field-row">
+              <label>
+                <span>金额</span>
+                <input type="number" id="expenseAmount" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required>
+              </label>
+              <label>
+                <span>币种</span>
+                <select id="expenseCurrency"></select>
+              </label>
+            </div>
+            <label>
+              <span>付款人</span>
+              <select id="payerSelect"></select>
+            </label>
+
+            <div class="workflow-panel" id="expenseRatePanel">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <p class="eyebrow">入账汇率</p>
+                  <h3 id="expenseRateStatus">输入金额后自动获取</h3>
+                </div>
+                <button class="secondary-button" type="button" id="expenseRateRefreshButton">自动获取</button>
+              </div>
+              <div class="field-row">
+                <label>
+                  <span id="expenseRateLabel">1 消费币 =</span>
+                  <input type="number" id="expenseRateInput" min="0.000001" step="0.000001" inputmode="decimal" placeholder="等待获取">
+                </label>
+                <label>
+                  <span>折合入账</span>
+                  <input type="text" id="expenseConvertedAmount" disabled value="CNY 0.00">
+                </label>
+              </div>
+              <p class="inline-message" id="expenseRateMessage" role="status"></p>
+            </div>
+
+            <div class="split-header">
+              <div>
+                <p class="eyebrow">分摊</p>
+                <h3>默认全员平摊</h3>
+              </div>
+              <button class="secondary-button" type="button" id="equalSplitButton">重置平摊</button>
+            </div>
+            <div class="split-list" id="splitList"></div>
+
+            <div class="button-row">
+              <button class="secondary-button" type="button" id="cancelEditButton" hidden>取消编辑</button>
+              <button class="primary-button" type="submit" id="saveExpenseButton">保存消费</button>
+            </div>
+            <p class="inline-message" id="expenseMessage" role="status"></p>
+          </form>
+        </section>
+
+        <section class="view" id="peopleView">
+          <form class="panel form-grid" id="settingsForm">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">账本设置</p>
+                <h3>名称和基准币</h3>
+              </div>
+            </div>
+            <label>
+              <span>账本名</span>
+              <input type="text" id="settingsBookName" maxlength="28" required>
+            </label>
+            <label>
+              <span>基准币</span>
+              <select id="baseCurrencySelect"></select>
+            </label>
+            <button class="primary-button" type="submit">保存设置</button>
+          </form>
+
+          <div class="panel danger-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">本机数据</p>
+                <h3>重置账本</h3>
+              </div>
+              <button class="danger-button" type="button" id="resetBookButton">清空本机账本</button>
+            </div>
+            <p class="helper-text">只会删除这台设备浏览器里的成员、消费和汇率缓存。</p>
+          </div>
+
+          <form class="panel member-form" id="personForm">
+            <label>
+              <span>新增成员</span>
+              <input type="text" id="personName" placeholder="姓名" maxlength="18" required>
+            </label>
+            <button class="primary-button" type="submit">添加</button>
+          </form>
+
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">参与人</p>
+                <h3>成员列表</h3>
+              </div>
+            </div>
+            <div class="member-list" id="memberList"></div>
+          </div>
+        </section>
+
+        <section class="view" id="listView">
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">账单明细</p>
+                <h3>所有消费</h3>
+              </div>
+              <button class="danger-button" type="button" id="clearExpensesButton">清空消费</button>
+            </div>
+            <div class="expense-list" id="expenseList"></div>
+          </div>
+        </section>
+
+        <section class="view" id="settleView">
+          <div class="panel form-grid">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">平账设置</p>
+                <h3>结算日期</h3>
+              </div>
+            </div>
+            <label>
+              <span>结算日期</span>
+              <input type="date" id="settleDate">
+            </label>
+            <button class="secondary-button" type="button" id="recalculateButton">重新计算</button>
+          </div>
+
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">付款货币</p>
+                <h3>每人自定义转账币种</h3>
+              </div>
+            </div>
+            <div class="settlement-rate-list" id="settlementCurrencyList"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">每人净额</p>
+                <h3>谁该收 / 谁该付</h3>
+              </div>
+            </div>
+            <div class="balance-list" id="balanceList"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">最少转账</p>
+                <h3>平账方案</h3>
+              </div>
+            </div>
+            <div class="transfer-list" id="transferList"></div>
+          </div>
+
+          <div class="panel danger-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">结束账本</p>
+                <h3>账已平</h3>
+              </div>
+              <button class="danger-button" type="button" id="closeBookButton">账已平，初始化账本</button>
+            </div>
+            <p class="helper-text">确认转账都完成后再使用，会把本机账本恢复到初始状态。</p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="emptyTemplate">
+      <div class="empty-state">
+        <strong>还没有内容</strong>
+        <span>添加成员和消费后，这里会自动更新。</span>
+      </div>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

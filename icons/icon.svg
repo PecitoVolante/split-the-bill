@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SplitBill">
+  <rect width="512" height="512" rx="96" fill="#0f766e"/>
+  <path fill="#f8fffd" d="M128 144c0-26.5 21.5-48 48-48h160c26.5 0 48 21.5 48 48v224c0 26.5-21.5 48-48 48H176c-26.5 0-48-21.5-48-48V144zm48 0v224h160V144H176z"/>
+  <path fill="#facc15" d="M208 194h96v34h-96v-34zm0 72h96v34h-96v-34z"/>
+  <circle cx="184" cy="211" r="17" fill="#facc15"/>
+  <circle cx="184" cy="283" r="17" fill="#facc15"/>
+</svg>
