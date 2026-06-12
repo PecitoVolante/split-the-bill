@@ -3,6 +3,7 @@ const {
   calculateBalances,
   buildTransfers,
   buildHistoryEntry,
+  buildReportText,
   normalizeState,
   pruneHistory,
   rateKey
@@ -188,6 +189,41 @@ const people = [
   ].map((entry) => ({ ...entry, archivedAt: "2026-05-01T00:00:00.000Z" }));
   const pruned = pruneHistory(history);
   assert.deepEqual(pruned.map((entry) => entry.id), ["fresh"]);
+}
+
+{
+  const text = buildReportText({
+    type: "history",
+    title: "Export Test",
+    label: "历史账单",
+    generatedAt: "2026-05-03T10:00:00Z",
+    baseCurrency: "CNY",
+    total: 100,
+    people: people.slice(0, 2),
+    expenses: [
+      {
+        id: "e1",
+        date: "2026-05-03",
+        title: "Dinner",
+        amount: 100,
+        currency: "CNY",
+        payerId: "a",
+        splits: [
+          { personId: "a", included: true, weight: 1 },
+          { personId: "b", included: true, weight: 1 }
+        ]
+      }
+    ],
+    balances: { a: 50, b: -50 },
+    transfers: [
+      { from: "b", to: "a", amount: 50, currency: "CNY", settlementAmount: 50, settlementMissing: false }
+    ],
+    missingRates: []
+  });
+
+  assert.match(text, /【总览】/);
+  assert.match(text, /Dinner/);
+  assert.match(text, /B → A：CNY 50.00/);
 }
 
 console.log("core tests passed");

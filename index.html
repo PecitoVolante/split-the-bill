@@ -235,6 +235,21 @@
             <div class="transfer-list" id="transferList"></div>
           </div>
 
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">导出分享</p>
+                <h3>总览和明细</h3>
+              </div>
+            </div>
+            <div class="action-grid">
+              <button class="secondary-button" type="button" id="shareCurrentButton">分享明细</button>
+              <button class="secondary-button" type="button" id="printCurrentButton">导出 PDF</button>
+            </div>
+            <p class="helper-text">PDF 会打开系统打印窗口，可在手机上保存或分享为 PDF。</p>
+            <p class="inline-message" id="exportMessage" role="status"></p>
+          </div>
+
           <div class="panel danger-panel">
             <div class="panel-heading">
               <div>
@@ -265,13 +280,20 @@
                 <p class="eyebrow">归档详情</p>
                 <h3 id="historyDetailTitle">历史账单</h3>
               </div>
-              <button class="secondary-button" type="button" id="closeHistoryDetailButton">收起</button>
+              <div class="panel-actions">
+                <button class="secondary-button small-button" type="button" id="shareHistoryButton">分享</button>
+                <button class="secondary-button small-button" type="button" id="printHistoryButton">PDF</button>
+                <button class="secondary-button small-button" type="button" id="closeHistoryDetailButton">收起</button>
+              </div>
             </div>
             <div class="history-detail" id="historyDetail"></div>
+            <p class="inline-message" id="historyExportMessage" role="status"></p>
           </div>
         </section>
       </main>
     </div>
+
+    <section class="print-report" id="printReport" aria-hidden="true"></section>
 
     <template id="emptyTemplate">
       <div class="empty-state">

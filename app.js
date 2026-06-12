@@ -58,6 +58,7 @@ let deferredInstallPrompt = null;
 let editingExpenseId = null;
 let expenseRateTimer = null;
 let lastExpenseRateRequest = "";
+let activeHistoryEntryId = null;
 
 function loadState() {
   try {
@@ -672,6 +673,314 @@ function settlementCurrencyForPerson(personId) {
   return state.settings.settlementCurrencies?.[personId] || state.settings.settlementCurrency || state.settings.baseCurrency;
 }
 
+function buildCurrentReport() {
+  const result = calculateBalances();
+  const transfers = result.missingRates.length ? [] : buildTransfers(result.balances);
+  const settleDate = $("#settleDate")?.value || todayISO();
+  return {
+    type: "current",
+    title: state.settings.bookName || "旅行账本",
+    label: "当前账本",
+    generatedAt: new Date().toISOString(),
+    settleDate,
+    baseCurrency: state.settings.baseCurrency,
+    total: result.total,
+    people: clone(state.people),
+    expenses: clone(state.expenses),
+    balances: clone(result.balances),
+    transfers: transfers.map((transfer) => enrichCurrentTransfer(transfer, settleDate)),
+    missingRates: clone(result.missingRates)
+  };
+}
+
+function enrichCurrentTransfer(transfer, settleDate) {
+  const currency = settlementCurrencyForPerson(transfer.from);
+  const converted = convertWithCache(transfer.amount, settleDate, state.settings.baseCurrency, currency);
+  return {
+    ...transfer,
+    currency,
+    settlementAmount: converted.value,
+    settlementMissing: converted.missing,
+    rateDate: converted.rate?.date || null
+  };
+}
+
+function buildHistoryReport(entry) {
+  return {
+    type: "history",
+    title: entry.bookName || "历史账单",
+    label: "历史账单",
+    generatedAt: entry.archivedAt,
+    archivedAt: entry.archivedAt,
+    baseCurrency: entry.baseCurrency,
+    total: entry.total,
+    people: clone(entry.people),
+    expenses: clone(entry.expenses),
+    balances: clone(entry.balances),
+    transfers: clone(entry.transfers).map((transfer) => ({
+      ...transfer,
+      currency: entry.baseCurrency,
+      settlementAmount: transfer.amount,
+      settlementMissing: false,
+      rateDate: null
+    })),
+    missingRates: clone(entry.missingRates)
+  };
+}
+
+function buildReportText(report) {
+  const lines = [];
+  const createdLabel = report.type === "history" ? "归档时间" : "生成时间";
+  lines.push(`${report.title} · ${report.label}`);
+  lines.push(`${createdLabel}：${formatFullDateTime(report.generatedAt)}`);
+  if (report.settleDate) lines.push(`结算日期：${report.settleDate}`);
+  lines.push("");
+  lines.push("【总览】");
+  lines.push(`参与人：${report.people.map((person) => person.name).join("、") || "无"}`);
+  lines.push(`消费笔数：${report.expenses.length}`);
+  lines.push(`总额：${formatMoney(report.total, report.baseCurrency)}`);
+  lines.push("");
+  lines.push("【消费明细】");
+  if (report.expenses.length === 0) {
+    lines.push("无消费明细");
+  } else {
+    sortedReportExpenses(report).forEach((expense, index) => {
+      const converted = reportExpenseConversion(report, expense);
+      const convertedText = converted.missing
+        ? report.type === "history"
+          ? "折合金额已计入归档总览"
+          : "缺少汇率"
+        : `折合 ${formatMoney(converted.value, report.baseCurrency)}${converted.rate?.date ? `，汇率日 ${converted.rate.date}` : ""}`;
+      lines.push(
+        `${index + 1}. ${expense.date} ${expense.title || "未命名消费"}：${reportPersonName(report, expense.payerId)} 付款 ${formatMoney(expense.amount, expense.currency)}；${convertedText}；分摊 ${reportSplitText(report, expense)}`
+      );
+    });
+  }
+  lines.push("");
+  lines.push("【每人净额】");
+  if (report.people.length === 0) {
+    lines.push("无参与人");
+  } else {
+    report.people.forEach((person) => {
+      const amount = Number(report.balances[person.id] || 0);
+      lines.push(`${person.name}：${amount >= 0 ? "应收" : "应付"} ${formatMoney(Math.abs(amount), report.baseCurrency)}`);
+    });
+  }
+  lines.push("");
+  lines.push("【平账方式】");
+  if (report.missingRates.length > 0) {
+    lines.push(`缺少汇率：${report.missingRates.map((rate) => `${rate.date} ${rate.from}→${rate.to}`).join("，")}`);
+  } else if (report.transfers.length === 0) {
+    lines.push("已经平账，无需转账");
+  } else {
+    report.transfers.forEach((transfer) => {
+      lines.push(reportTransferText(report, transfer));
+    });
+  }
+  return lines.join("\n");
+}
+
+function renderPrintReport(report) {
+  const container = $("#printReport");
+  if (!container) return;
+  const createdLabel = report.type === "history" ? "归档时间" : "生成时间";
+  container.innerHTML = `
+    <article>
+      <header>
+        <h1>${escapeHtml(report.title)}</h1>
+        <p class="print-note">${escapeHtml(report.label)}</p>
+        <div class="print-meta">
+          <div><span>${createdLabel}</span><strong>${escapeHtml(formatFullDateTime(report.generatedAt))}</strong></div>
+          <div><span>结算日期</span><strong>${escapeHtml(report.settleDate || "按归档记录")}</strong></div>
+          <div><span>参与人</span><strong>${report.people.length}</strong></div>
+          <div><span>消费笔数</span><strong>${report.expenses.length}</strong></div>
+          <div><span>基准币</span><strong>${escapeHtml(report.baseCurrency)}</strong></div>
+          <div><span>总额</span><strong>${escapeHtml(formatMoney(report.total, report.baseCurrency))}</strong></div>
+        </div>
+      </header>
+      <section>
+        <h2>消费明细</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>说明</th>
+              <th>付款人</th>
+              <th>金额</th>
+              <th>折合</th>
+              <th>分摊</th>
+            </tr>
+          </thead>
+          <tbody>${renderReportExpenseRows(report)}</tbody>
+        </table>
+      </section>
+      <section>
+        <h2>每人净额</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>成员</th>
+              <th>状态</th>
+              <th>金额</th>
+            </tr>
+          </thead>
+          <tbody>${renderReportBalanceRows(report)}</tbody>
+        </table>
+      </section>
+      <section>
+        <h2>平账方式</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>付款人</th>
+              <th>收款人</th>
+              <th>基准金额</th>
+              <th>转账金额</th>
+            </tr>
+          </thead>
+          <tbody>${renderReportTransferRows(report)}</tbody>
+        </table>
+      </section>
+    </article>
+  `;
+  container.setAttribute("aria-hidden", "false");
+}
+
+function renderReportExpenseRows(report) {
+  if (report.expenses.length === 0) return `<tr><td colspan="6">无消费明细</td></tr>`;
+  return sortedReportExpenses(report).map((expense) => {
+    const converted = reportExpenseConversion(report, expense);
+    const convertedText = converted.missing
+      ? report.type === "history"
+        ? "已计入归档总览"
+        : "缺少汇率"
+      : `${formatMoney(converted.value, report.baseCurrency)}${converted.rate?.date ? ` · ${converted.rate.date}` : ""}`;
+    return `
+      <tr>
+        <td>${escapeHtml(expense.date)}</td>
+        <td>${escapeHtml(expense.title || "未命名消费")}</td>
+        <td>${escapeHtml(reportPersonName(report, expense.payerId))}</td>
+        <td>${escapeHtml(formatMoney(expense.amount, expense.currency))}</td>
+        <td>${escapeHtml(convertedText)}</td>
+        <td>${escapeHtml(reportSplitText(report, expense))}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderReportBalanceRows(report) {
+  if (report.people.length === 0) return `<tr><td colspan="3">无参与人</td></tr>`;
+  return report.people.map((person) => {
+    const amount = Number(report.balances[person.id] || 0);
+    return `
+      <tr>
+        <td>${escapeHtml(person.name)}</td>
+        <td>${amount >= 0 ? "应收" : "应付"}</td>
+        <td>${escapeHtml(formatMoney(Math.abs(amount), report.baseCurrency))}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderReportTransferRows(report) {
+  if (report.missingRates.length > 0) {
+    return `<tr><td colspan="4">${escapeHtml(`缺少汇率：${report.missingRates.map((rate) => `${rate.date} ${rate.from}→${rate.to}`).join("，")}`)}</td></tr>`;
+  }
+  if (report.transfers.length === 0) return `<tr><td colspan="4">已经平账，无需转账</td></tr>`;
+  return report.transfers.map((transfer) => `
+    <tr>
+      <td>${escapeHtml(reportPersonName(report, transfer.from))}</td>
+      <td>${escapeHtml(reportPersonName(report, transfer.to))}</td>
+      <td>${escapeHtml(formatMoney(transfer.amount, report.baseCurrency))}</td>
+      <td>${escapeHtml(reportTransferAmountText(report, transfer))}</td>
+    </tr>
+  `).join("");
+}
+
+function sortedReportExpenses(report) {
+  return [...report.expenses].sort((a, b) => {
+    const dateCompare = String(a.date || "").localeCompare(String(b.date || ""));
+    if (dateCompare !== 0) return dateCompare;
+    return String(a.title || "").localeCompare(String(b.title || ""));
+  });
+}
+
+function reportExpenseConversion(report, expense) {
+  if (report.type === "current") return convertExpenseAmount(state, expense);
+  const amount = Number(expense.amount || 0);
+  if (expense.currency === report.baseCurrency) {
+    return { value: amount, rate: { rate: 1, date: expense.date, source: "same" }, missing: false };
+  }
+  if (expense.rateOverride?.rate) {
+    return {
+      value: amount * Number(expense.rateOverride.rate),
+      rate: expense.rateOverride,
+      missing: false
+    };
+  }
+  return { value: 0, rate: null, missing: true };
+}
+
+function reportPersonName(report, id) {
+  return report.people.find((person) => person.id === id)?.name || "未知成员";
+}
+
+function reportSplitText(report, expense) {
+  const splits = Array.isArray(expense.splits) ? expense.splits : [];
+  const included = splits.filter((split) => split.included && Number(split.weight) > 0);
+  if (included.length === 0) return "无";
+  return included.map((split) => `${reportPersonName(report, split.personId)}:${split.weight}`).join(" / ");
+}
+
+function reportTransferText(report, transfer) {
+  return `${reportPersonName(report, transfer.from)} → ${reportPersonName(report, transfer.to)}：${formatMoney(transfer.amount, report.baseCurrency)}${reportTransferAmountSuffix(report, transfer)}`;
+}
+
+function reportTransferAmountText(report, transfer) {
+  if (transfer.settlementMissing) return `${transfer.currency || report.baseCurrency} 待补汇率`;
+  if (!transfer.currency || transfer.currency === report.baseCurrency) return formatMoney(transfer.amount, report.baseCurrency);
+  const rateText = transfer.rateDate ? ` · 汇率日 ${transfer.rateDate}` : "";
+  return `${formatMoney(transfer.settlementAmount, transfer.currency)}${rateText}`;
+}
+
+function reportTransferAmountSuffix(report, transfer) {
+  if (transfer.settlementMissing) return `；${transfer.currency || report.baseCurrency} 待补汇率`;
+  if (!transfer.currency || transfer.currency === report.baseCurrency) return "";
+  const rateText = transfer.rateDate ? `，汇率日 ${transfer.rateDate}` : "";
+  return `；约 ${formatMoney(transfer.settlementAmount, transfer.currency)}${rateText}`;
+}
+
+async function shareReport(report, messageSelector) {
+  const text = buildReportText(report);
+  const title = `${report.title}账单`;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title, text });
+      showMessage(messageSelector, "已打开系统分享。");
+      return;
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    showMessage(messageSelector, "当前浏览器不支持系统分享，已复制明细。");
+  } catch {
+    window.prompt("复制账单内容", text);
+    showMessage(messageSelector, "当前浏览器不支持自动分享，请手动复制弹窗内容。");
+  }
+}
+
+function printReport(report) {
+  renderPrintReport(report);
+  window.print();
+}
+
+function activeHistoryEntry() {
+  return state.history.find((entry) => entry.id === activeHistoryEntryId) || null;
+}
+
 function buildHistoryEntry(currentState = state, archivedAt = new Date()) {
   const result = calculateBalances(currentState);
   const transfers = result.missingRates.length ? [] : buildTransfers(result.balances);
@@ -763,6 +1072,7 @@ function renderHistoryDetail(entryId) {
   const detail = $("#historyDetail");
   if (!entry || !panel || !detail) return;
 
+  activeHistoryEntryId = entryId;
   $("#historyDetailTitle").textContent = entry.bookName;
   detail.innerHTML = "";
   panel.hidden = false;
@@ -851,6 +1161,18 @@ function formatDateTime(value) {
   });
 }
 
+function formatFullDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未知时间";
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 function daysUntil(value) {
   const diff = new Date(value).getTime() - Date.now();
   return Math.max(0, Math.ceil(diff / DAY_MS));
@@ -879,6 +1201,7 @@ function collectSplits() {
 
 function showMessage(elementId, message) {
   const element = $(elementId);
+  if (!element) return;
   element.textContent = message;
   if (!message) return;
   window.setTimeout(() => {
@@ -1106,6 +1429,14 @@ function bindEvents() {
     await refreshSettlementRateAndRender();
   });
 
+  $("#shareCurrentButton").addEventListener("click", async () => {
+    await shareReport(buildCurrentReport(), "#exportMessage");
+  });
+
+  $("#printCurrentButton").addEventListener("click", () => {
+    printReport(buildCurrentReport());
+  });
+
   $("#closeBookButton").addEventListener("click", () => {
     const ok = window.confirm("确认所有转账都完成，并把当前账本归档为历史后初始化吗？历史账单会保留 30 天。");
     if (!ok) return;
@@ -1135,6 +1466,25 @@ function bindEvents() {
 
   $("#closeHistoryDetailButton").addEventListener("click", () => {
     $("#historyDetailPanel").hidden = true;
+  });
+
+  $("#shareHistoryButton").addEventListener("click", async () => {
+    const entry = activeHistoryEntry();
+    if (!entry) return;
+    await shareReport(buildHistoryReport(entry), "#historyExportMessage");
+  });
+
+  $("#printHistoryButton").addEventListener("click", () => {
+    const entry = activeHistoryEntry();
+    if (!entry) return;
+    printReport(buildHistoryReport(entry));
+  });
+
+  window.addEventListener("afterprint", () => {
+    const report = $("#printReport");
+    if (!report) return;
+    report.innerHTML = "";
+    report.setAttribute("aria-hidden", "true");
   });
 
   window.addEventListener("beforeinstallprompt", (event) => {
@@ -1176,6 +1526,10 @@ if (typeof window !== "undefined") {
     calculateBalances,
     buildTransfers,
     buildHistoryEntry,
+    buildCurrentReport,
+    buildHistoryReport,
+    buildReportText,
+    renderPrintReport,
     convertWithCache,
     convertWithCacheFromState,
     pruneHistory,
@@ -1190,6 +1544,7 @@ if (typeof module !== "undefined") {
     calculateBalances,
     buildTransfers,
     buildHistoryEntry,
+    buildReportText,
     convertWithCacheFromState,
     pruneHistory,
     rateKey,

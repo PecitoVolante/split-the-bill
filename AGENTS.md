@@ -25,6 +25,7 @@ The app is designed for one person to manage a bill locally on their phone. Data
 - Editable expense history for current ledger entries.
 - Settlement calculation using net balances and a greedy minimum-transfer plan.
 - Per-debtor settlement currency selection on the settlement screen.
+- Share/export reports for current and archived bills, including overview, expense details, balances, and settlement transfers.
 - Ledger reset after settlement.
 - Archive on settlement reset: current ledger is saved as a history entry before being cleared.
 - Recent history view from the top-right `历` button.
